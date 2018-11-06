@@ -1,0 +1,335 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon EKS - Node Group - Released 2018-08-30'
+
+Parameters:
+
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  NodeImageId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI id for the node instances.
+    Default: ami-0440e4f6b9713faf6
+
+  NodeVolumeSize:
+    Type: Number
+    Description: Node volume size
+    Default: 20
+
+  ClusterName:
+    Description: The cluster name provided when the cluster was created. If it is incorrect, nodes will not be able to join the cluster.
+    Type: String
+
+  BootstrapArguments:
+    Description: Arguments to pass to the bootstrap script. See files/bootstrap.sh in https://github.com/awslabs/amazon-eks-ami
+    Default: ""
+    Type: String
+
+  NodeGroupName:
+    Description: Unique identifier for the Node Group.
+    Type: String
+
+  ClusterControlPlaneSecurityGroup:
+    Description: The security group of the cluster control plane.
+    Type: AWS::EC2::SecurityGroup::Id
+
+  VpcId:
+    Description: The VPC of the worker instances
+    Type: AWS::EC2::VPC::Id
+
+  Subnets:
+    Description: The subnets where workers can be created.
+    Type: List<AWS::EC2::Subnet::Id>
+
+  SpotFleetCapacity:
+    Type: Number
+    Description: Number of vCPU of SpotFleet. If you don't need launching instances, Please set to 0.
+    Default: 0
+
+Conditions:
+  CreateSpotFleet: !Not [ !Equals [ !Ref SpotFleetCapacity, 0 ] ]
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "EKS Cluster"
+        Parameters:
+          - ClusterName
+          - ClusterControlPlaneSecurityGroup
+      - Label:
+          default: "Worker Node Configuration"
+        Parameters:
+          - NodeGroupName
+          - NodeInstanceType
+          - NodeImageId
+          - NodeVolumeSize
+          - KeyName
+          - BootstrapArguments
+      - Label:
+          default: "Worker Network Configuration"
+        Parameters:
+          - VpcId
+          - Subnets
+
+Resources:
+
+  NodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref NodeInstanceRole
+
+  NodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Policies: 
+        - PolicyName: aws-alb-ingress-controller
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - acm:DescribeCertificate
+                  - acm:ListCertificates
+                  - acm:GetCertificate
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:CreateSecurityGroup
+                  - ec2:CreateTags
+                  - ec2:DeleteSecurityGroup
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeTags
+                  - ec2:DescribeVpcs
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:ModifyNetworkInterfaceAttribute
+                  - ec2:RevokeSecurityGroupIngress
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - elasticloadbalancing:AddTags
+                  - elasticloadbalancing:CreateListener
+                  - elasticloadbalancing:CreateLoadBalancer
+                  - elasticloadbalancing:CreateRule
+                  - elasticloadbalancing:CreateTargetGroup
+                  - elasticloadbalancing:DeleteListener
+                  - elasticloadbalancing:DeleteLoadBalancer
+                  - elasticloadbalancing:DeleteRule
+                  - elasticloadbalancing:DeleteTargetGroup
+                  - elasticloadbalancing:DeregisterTargets
+                  - elasticloadbalancing:DescribeListeners
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeLoadBalancerAttributes
+                  - elasticloadbalancing:DescribeRules
+                  - elasticloadbalancing:DescribeSSLPolicies
+                  - elasticloadbalancing:DescribeTags
+                  - elasticloadbalancing:DescribeTargetGroups
+                  - elasticloadbalancing:DescribeTargetGroupAttributes
+                  - elasticloadbalancing:DescribeTargetHealth
+                  - elasticloadbalancing:ModifyListener
+                  - elasticloadbalancing:ModifyLoadBalancerAttributes
+                  - elasticloadbalancing:ModifyRule
+                  - elasticloadbalancing:ModifyTargetGroup
+                  - elasticloadbalancing:ModifyTargetGroupAttributes
+                  - elasticloadbalancing:RegisterTargets
+                  - elasticloadbalancing:RemoveTags
+                  - elasticloadbalancing:SetIpAddressType
+                  - elasticloadbalancing:SetSecurityGroups
+                  - elasticloadbalancing:SetSubnets
+                  - elasticloadbalancing:SetWebACL
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - iam:GetServerCertificate
+                  - iam:ListServerCertificates
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - waf-regional:GetWebACLForResource
+                  - waf-regional:GetWebACL
+                  - waf-regional:AssociateWebACL
+                  - waf-regional:DisassociateWebACL
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - tag:GetResources
+                  - tag:TagResources
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - waf:GetWebACL
+                Resource: "*"
+
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for all nodes in the cluster
+      VpcId:
+        !Ref VpcId
+      Tags:
+      - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
+        Value: 'owned'
+
+  NodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow node to communicate with each other
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 0
+      ToPort: 65535
+
+  NodeSecurityGroupFromControlPlaneIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow worker Kubelets and pods to receive communication from the cluster control plane
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref ClusterControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  ControlPlaneEgressToNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with worker Kubelet and pods
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  NodeSecurityGroupFromControlPlaneOn443Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow pods running extension API servers on port 443 to receive communication from cluster control plane
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref ClusterControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ControlPlaneEgressToNodeSecurityGroupOn443:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with pods running extension API servers on port 443
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ClusterControlPlaneSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow pods to communicate with the cluster API Server
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      ToPort: 443
+      FromPort: 443
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        InstanceInitiatedShutdownBehavior: terminate
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        SecurityGroupIds:
+          - !Ref NodeSecurityGroup
+        EbsOptimized: true
+        KeyName: !Ref KeyName
+        ImageId: !Ref NodeImageId
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+                Value: owned
+              - Key: Name
+                Value: !Sub "${ClusterName}-${NodeGroupName}-Node"
+        BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref NodeVolumeSize
+            VolumeType: gp2
+            DeleteOnTermination: true
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #cloud-config
+              merge_how: list(append)+dict(recurse_array)+str()
+              packages:
+                - amazon-ssm-agent
+              runcmd:
+                - /etc/eks/bootstrap.sh ${ClusterName} ${BootstrapArguments}
+                - systemctl start amazon-ssm-agent
+
+  SpotFleet:
+    Type: AWS::EC2::SpotFleet
+    Condition: CreateSpotFleet
+    Properties:
+      SpotFleetRequestConfigData:
+        Type: maintain
+        TargetCapacity: !Ref SpotFleetCapacity
+        ReplaceUnhealthyInstances: true
+        LaunchTemplateConfigs:
+          - LaunchTemplateSpecification:
+              LaunchTemplateId: !Ref LaunchTemplate
+              Version: !GetAtt LaunchTemplate.LatestVersionNumber
+            Overrides:
+              - InstanceType: m5.large
+                WeightedCapacity: 2
+                SubnetId: !Select [ 0, !Ref Subnets ]
+              - InstanceType: m5.large
+                WeightedCapacity: 2
+                SubnetId: !Select [ 1, !Ref Subnets ]
+              - InstanceType: m5.large
+                WeightedCapacity: 2
+                SubnetId: !Select [ 2, !Ref Subnets ]
+              - InstanceType: m5.xlarge
+                WeightedCapacity: 4
+                SubnetId: !Select [ 0, !Ref Subnets ]
+              - InstanceType: m5.xlarge
+                WeightedCapacity: 4
+                SubnetId: !Select [ 1, !Ref Subnets ]
+              - InstanceType: m5.xlarge
+                WeightedCapacity: 4
+                SubnetId: !Select [ 2, !Ref Subnets ]
+        AllocationStrategy: diversified
+        IamFleetRole: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/spotfleet.amazonaws.com/AWSServiceRoleForEC2SpotFleet'
+
+Outputs:
+  NodeInstanceRole:
+    Description: The node instance role
+    Value: !GetAtt NodeInstanceRole.Arn
