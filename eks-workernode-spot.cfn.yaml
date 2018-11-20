@@ -27,10 +27,6 @@ Parameters:
     Default: ""
     Type: String
 
-#  NodeGroupName:
-#    Description: Unique identifier for the Node Group.
-#    Type: String
-
   ClusterControlPlaneSecurityGroup:
     Description: The security group of the cluster control plane.
     Type: AWS::EC2::SecurityGroup::Id
@@ -39,9 +35,17 @@ Parameters:
     Description: The VPC of the worker instances
     Type: AWS::EC2::VPC::Id
 
-  Subnets:
-    Description: The subnets where workers can be created.
-    Type: List<AWS::EC2::Subnet::Id>
+  Subnet01:
+    Description: The subnet where workers can be created.
+    Type: AWS::EC2::Subnet::Id
+
+  Subnet02:
+    Description: The subnet where workers can be created.
+    Type: AWS::EC2::Subnet::Id
+
+  Subnet03:
+    Description: The subnet where workers can be created.
+    Type: AWS::EC2::Subnet::Id
 
   SpotFleetCapacity:
     Type: Number
@@ -70,7 +74,6 @@ Metadata:
       - Label:
           default: "Worker Node Configuration"
         Parameters:
-          # - NodeGroupName
           - NodeInstanceType
           - NodeImageId
           - NodeVolumeSize
@@ -80,7 +83,9 @@ Metadata:
           default: "Worker Network Configuration"
         Parameters:
           - VpcId
-          - Subnets
+          - Subnet01
+          - Subnet02
+          - Subnet03
 
 Resources:
 
@@ -237,22 +242,22 @@ Resources:
             Overrides:
               - InstanceType: m5.large
                 WeightedCapacity: 2
-                SubnetId: !Select [ 0, !Ref Subnets ]
+                SubnetId: !Ref Subnet01
               - InstanceType: m5.large
                 WeightedCapacity: 2
-                SubnetId: !Select [ 1, !Ref Subnets ]
+                SubnetId: !Ref Subnet02
               - InstanceType: m5.large
                 WeightedCapacity: 2
-                SubnetId: !Select [ 2, !Ref Subnets ]
+                SubnetId: !Ref Subnet03
               - InstanceType: m5.xlarge
                 WeightedCapacity: 4
-                SubnetId: !Select [ 0, !Ref Subnets ]
+                SubnetId: !Ref Subnet01
               - InstanceType: m5.xlarge
                 WeightedCapacity: 4
-                SubnetId: !Select [ 1, !Ref Subnets ]
+                SubnetId: !Ref Subnet02
               - InstanceType: m5.xlarge
                 WeightedCapacity: 4
-                SubnetId: !Select [ 2, !Ref Subnets ]
+                SubnetId: !Ref Subnet03
         AllocationStrategy: diversified
         IamFleetRole: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/spotfleet.amazonaws.com/AWSServiceRoleForEC2SpotFleet'
 
