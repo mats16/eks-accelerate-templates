@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Amazon EKS - Node Group - Released 2018-08-30'
+Description: 'Amazon EKS - Node Group via SpotFleet'
 
 Parameters:
 
@@ -23,13 +23,13 @@ Parameters:
     Type: String
 
   BootstrapArguments:
-    Description: Arguments to pass to the bootstrap script. See files/bootstrap.sh in https://github.com/awslabs/amazon-eks-ami
+    Description: Arguments to pass to the bootstrap script. See https://github.com/awslabs/amazon-eks-ami/blob/master/files/bootstrap.sh
     Default: ""
     Type: String
 
-  NodeGroupName:
-    Description: Unique identifier for the Node Group.
-    Type: String
+#  NodeGroupName:
+#    Description: Unique identifier for the Node Group.
+#    Type: String
 
   ClusterControlPlaneSecurityGroup:
     Description: The security group of the cluster control plane.
@@ -48,8 +48,16 @@ Parameters:
     Description: Number of vCPU of SpotFleet. If you don't need launching instances, Please set to 0.
     Default: 0
 
+  EnableAlbIngressController:
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
 Conditions:
   CreateSpotFleet: !Not [ !Equals [ !Ref SpotFleetCapacity, 0 ] ]
+  CreatePolicyForIngress: !Equals [ !Ref EnableAlbIngressController, 'true' ]
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -62,7 +70,7 @@ Metadata:
       - Label:
           default: "Worker Node Configuration"
         Parameters:
-          - NodeGroupName
+          # - NodeGroupName
           - NodeInstanceType
           - NodeImageId
           - NodeVolumeSize
@@ -89,99 +97,18 @@ Resources:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-            - ec2.amazonaws.com
-          Action:
-          - sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
       Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
         - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
         - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
-      Policies: 
-        - PolicyName: aws-alb-ingress-controller
-          PolicyDocument: 
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - acm:DescribeCertificate
-                  - acm:ListCertificates
-                  - acm:GetCertificate
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - ec2:AuthorizeSecurityGroupIngress
-                  - ec2:CreateSecurityGroup
-                  - ec2:CreateTags
-                  - ec2:DeleteSecurityGroup
-                  - ec2:DescribeInstances
-                  - ec2:DescribeInstanceStatus
-                  - ec2:DescribeSecurityGroups
-                  - ec2:DescribeSubnets
-                  - ec2:DescribeTags
-                  - ec2:DescribeVpcs
-                  - ec2:ModifyInstanceAttribute
-                  - ec2:ModifyNetworkInterfaceAttribute
-                  - ec2:RevokeSecurityGroupIngress
-                Resource: "*"
-              - Effect: "Allow"
-                Action:
-                  - elasticloadbalancing:AddTags
-                  - elasticloadbalancing:CreateListener
-                  - elasticloadbalancing:CreateLoadBalancer
-                  - elasticloadbalancing:CreateRule
-                  - elasticloadbalancing:CreateTargetGroup
-                  - elasticloadbalancing:DeleteListener
-                  - elasticloadbalancing:DeleteLoadBalancer
-                  - elasticloadbalancing:DeleteRule
-                  - elasticloadbalancing:DeleteTargetGroup
-                  - elasticloadbalancing:DeregisterTargets
-                  - elasticloadbalancing:DescribeListeners
-                  - elasticloadbalancing:DescribeLoadBalancers
-                  - elasticloadbalancing:DescribeLoadBalancerAttributes
-                  - elasticloadbalancing:DescribeRules
-                  - elasticloadbalancing:DescribeSSLPolicies
-                  - elasticloadbalancing:DescribeTags
-                  - elasticloadbalancing:DescribeTargetGroups
-                  - elasticloadbalancing:DescribeTargetGroupAttributes
-                  - elasticloadbalancing:DescribeTargetHealth
-                  - elasticloadbalancing:ModifyListener
-                  - elasticloadbalancing:ModifyLoadBalancerAttributes
-                  - elasticloadbalancing:ModifyRule
-                  - elasticloadbalancing:ModifyTargetGroup
-                  - elasticloadbalancing:ModifyTargetGroupAttributes
-                  - elasticloadbalancing:RegisterTargets
-                  - elasticloadbalancing:RemoveTags
-                  - elasticloadbalancing:SetIpAddressType
-                  - elasticloadbalancing:SetSecurityGroups
-                  - elasticloadbalancing:SetSubnets
-                  - elasticloadbalancing:SetWebACL
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - iam:GetServerCertificate
-                  - iam:ListServerCertificates
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - waf-regional:GetWebACLForResource
-                  - waf-regional:GetWebACL
-                  - waf-regional:AssociateWebACL
-                  - waf-regional:DisassociateWebACL
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - tag:GetResources
-                  - tag:TagResources
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - waf:GetWebACL
-                Resource: "*"
 
   NodeSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -277,7 +204,7 @@ Resources:
               - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
                 Value: owned
               - Key: Name
-                Value: !Sub "${ClusterName}-${NodeGroupName}-Node"
+                Value: !Sub "eks-${ClusterName}-Node"
         BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -328,6 +255,110 @@ Resources:
                 SubnetId: !Select [ 2, !Ref Subnets ]
         AllocationStrategy: diversified
         IamFleetRole: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/spotfleet.amazonaws.com/AWSServiceRoleForEC2SpotFleet'
+
+  IngressControllerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: CreatePolicyForIngress
+    Properties:
+      #PolicyName: k8s-alb-ingress-controller
+      Roles:
+        - !Ref NodeInstanceRole
+      PolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["acm:DescribeCertificate", "acm:ListCertificates", "acm:GetCertificate"],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteSecurityGroup",
+                "ec2:DescribeInstances",
+                "ec2:DescribeInstanceStatus",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeTags",
+                "ec2:DescribeVpcs",
+                "ec2:ModifyInstanceAttribute",
+                "ec2:ModifyNetworkInterfaceAttribute",
+                "ec2:RevokeSecurityGroupIngress"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:AddTags",
+                "elasticloadbalancing:CreateListener",
+                "elasticloadbalancing:CreateLoadBalancer",
+                "elasticloadbalancing:CreateRule",
+                "elasticloadbalancing:CreateTargetGroup",
+                "elasticloadbalancing:DeleteListener",
+                "elasticloadbalancing:DeleteLoadBalancer",
+                "elasticloadbalancing:DeleteRule",
+                "elasticloadbalancing:DeleteTargetGroup",
+                "elasticloadbalancing:DeregisterTargets",
+                "elasticloadbalancing:DescribeListeners",
+                "elasticloadbalancing:DescribeLoadBalancers",
+                "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                "elasticloadbalancing:DescribeRules",
+                "elasticloadbalancing:DescribeSSLPolicies",
+                "elasticloadbalancing:DescribeTags",
+                "elasticloadbalancing:DescribeTargetGroups",
+                "elasticloadbalancing:DescribeTargetGroupAttributes",
+                "elasticloadbalancing:DescribeTargetHealth",
+                "elasticloadbalancing:ModifyListener",
+                "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                "elasticloadbalancing:ModifyRule",
+                "elasticloadbalancing:ModifyTargetGroup",
+                "elasticloadbalancing:ModifyTargetGroupAttributes",
+                "elasticloadbalancing:RegisterTargets",
+                "elasticloadbalancing:RemoveTags",
+                "elasticloadbalancing:SetIpAddressType",
+                "elasticloadbalancing:SetSecurityGroups",
+                "elasticloadbalancing:SetSubnets",
+                "elasticloadbalancing:SetWebACL"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["iam:GetServerCertificate", "iam:ListServerCertificates"],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "waf-regional:GetWebACLForResource",
+                "waf-regional:GetWebACL",
+                "waf-regional:AssociateWebACL",
+                "waf-regional:DisassociateWebACL"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "tag:GetResources",
+                "tag:TagResources"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "waf:GetWebACL"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
 
 Outputs:
   NodeInstanceRole:
